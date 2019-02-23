@@ -7,7 +7,7 @@ export function activate(context) {
 
   const providerRegistrations = vscode.Disposable.from(
     vscode.workspace.registerTextDocumentContentProvider(sp.SearchyProvider.scheme, provider),
-    vscode.languages.registerDocumentLinkProvider({scheme: sp.SearchyProvider.scheme}, provider)
+    vscode.languages.registerDocumentLinkProvider({ scheme: sp.SearchyProvider.scheme }, provider)
   )
 
   function showSearchyPopup(options)

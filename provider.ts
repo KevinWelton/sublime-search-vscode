@@ -12,11 +12,16 @@ const execOpts = {
 }
 
 export class SearchyProvider {
-  links:Array<Array<vscode.DocumentLink>>;
+  searchProc = null;
+  content:string = "";
+  buffer:string = "";
+  resultsByFile = {};
+  onDidChangeEmitter = new vscode.EventEmitter<vscode.Uri>();
+	onDidChange = this.onDidChangeEmitter.event;
+  links:Array<Array<vscode.DocumentLink>> = [];
   _subscriptions: vscode.Disposable;
 
   constructor() {
-    this.links = []
     this._subscriptions = vscode.workspace.onDidCloseTextDocument(doc => {
       this.links[doc.uri.toString()] = []
     });
@@ -30,106 +35,128 @@ export class SearchyProvider {
     return 'searchy'
   }
 
-  onDidChange() { return null; }
+  provideTextDocumentContent(uri:vscode.Uri) {
+    if(this.content == "") {
+      let uriString:string = uri.toString()
+      this.links[uriString] = [];
+      const params = querystring.parse(uri.query)
+      const cmd = params.cmd
 
-  provideTextDocumentContent(uri) {
-    let uriString = uri.toString()
-    this.links[uriString] = [];
-    const params = querystring.parse(uri.query)
-    const cmd = params.cmd
-
-    let searchQuery = parseSearchQuery(cmd);
-    let searchResults = null
-    try {
-      searchResults = runCommandSync(searchQuery)
-    } catch (err) {
-      return `${err}`
-    }
-
-    if (searchResults == null || !searchResults.length) {
-      return 'There was an error during your search!'
-    }
-
-    let resultsArray = searchResults.toString().split('\n')
-    resultsArray = resultsArray.filter((item) => {
-      return item != null && item.length > 0
-    })
-    let resultsByFile = {}
-    let lastFormattedLine;
-
-    var addFormattedLine = function(formattedLine) {
-      if (! resultsByFile.hasOwnProperty(formattedLine.file)) {
-         resultsByFile[formattedLine.file] = [];
+      let searchQuery = parseSearchQuery(cmd);
+      let searchResults = null
+      try {
+        searchResults = this.runCommandAsync(searchQuery, uri)
+      } catch (err) {
+        return `${err}`
       }
-      
-      resultsByFile[formattedLine.file].push(formattedLine);
     }
 
-    resultsArray.forEach((searchResult) => {
-      let splitLine = searchResult.match(/(.*?):(\d+):(\d+):(.*)/);
-      let formattedLine;
-      if (splitLine) {
-        formattedLine = formatLine(splitLine)
-      } else if (searchResult == '--') {
-        if (lastFormattedLine) {
-          addFormattedLine({
-            file: lastFormattedLine.file,
-            seperator: true
-          });
-        }
-      } else {
-        let contextLine = searchResult.match(/(.*?)-(\d+)-(.*)/);
-        
-        if (contextLine) {
-          formattedLine = formatContextLine(contextLine)
-        }
-      }
+    return this.content;
+  }
 
-      if (formattedLine === undefined) {
+  runCommandAsync(searchQuery, uriString) {
+    let my = this;
+    my.searchProc = child_process.exec(`${ripgrep.rgPath} --case-sensitive --line-number --column --hidden --context=2 -e "${searchQuery.query}" ${searchQuery.path}`, execOpts)
+    my.searchProc.stdout.on("data", data => {
+
+      if (!data.length) {
         return;
       }
 
-      addFormattedLine(formattedLine);
+      // Update content
+      my.buffer += data;
+      let lastNewline = my.buffer.lastIndexOf("\n");
 
-      lastFormattedLine = formattedLine;
-      
-    });
-
-    var removeTrailingSeperators = function() {
-      for (var file in resultsByFile) {
-        let lines = resultsByFile[file];
-        if (lines[lines.length - 1].seperator) {
-          lines.splice(lines.length - 1, 1);
-          resultsByFile[file] = lines;
-        }
+      if(lastNewline == -1) { 
+        return;
       }
-    };
 
-    removeTrailingSeperators();
+      let resultsArray = my.buffer.substr(0, lastNewline + 1).split('\n');
+      my.buffer = my.buffer.substr(lastNewline + 1);
 
-    let sortedFiles = Object.keys(resultsByFile).sort()
-    let lineNumber = 1
+      // Filter out empty lines
+      resultsArray = resultsArray.filter((item) => {
+        return item != null && item.length > 0
+      })
 
-    let lines = sortedFiles.map((fileName) => {
-      lineNumber += 1
-      let resultsForFile = resultsByFile[fileName].map((searchResult, index) => {
-        lineNumber += 1
-        if (searchResult.seperator) {
-          return '  ..';
-        } else {
-          this.createDocumentLink(searchResult, lineNumber, searchQuery, uriString)
-          return `  ${searchResult.line}: ${searchResult.result}`
+      let lastFormattedLine;
+  
+      var addFormattedLine = function(formattedLine) {
+        // Add the file for the result to the file results array if it doesn't already exist
+        if (! my.resultsByFile.hasOwnProperty(formattedLine.file)) {
+           my.resultsByFile[formattedLine.file] = [];
         }
-      }).join('\n')
-      lineNumber += 1
-      return `
+        
+        my.resultsByFile[formattedLine.file].push(formattedLine);
+      }
+  
+      resultsArray.forEach((searchResult) => {
+        let splitLine = searchResult.match(/(.*?):(\d+):(\d+):(.*)/);
+        let formattedLine;
+        if (splitLine) {
+          formattedLine = formatLine(splitLine)
+        } else if (searchResult == '--') {
+          if (lastFormattedLine) {
+            addFormattedLine({
+              file: lastFormattedLine.file,
+              seperator: true
+            });
+          }
+        } else {
+          let contextLine = searchResult.match(/(.*?)-(\d+)-(.*)/);
+          
+          if (contextLine) {
+            formattedLine = formatContextLine(contextLine)
+          }
+        }
+  
+        if (formattedLine === undefined) {
+          return;
+        }
+  
+        addFormattedLine(formattedLine);
+  
+        lastFormattedLine = formattedLine;
+        
+      });
+  
+      var removeTrailingSeperators = function() {
+        for (var file in my.resultsByFile) {
+          let lines = my.resultsByFile[file];
+          if (lines[lines.length - 1].seperator) {
+            lines.splice(lines.length - 1, 1);
+            my.resultsByFile[file] = lines;
+          }
+        }
+      };
+  
+      removeTrailingSeperators();
+  
+      let sortedFiles = Object.keys(my.resultsByFile).sort()
+      let lineNumber = 1
+  
+      let lines = sortedFiles.map((fileName) => {
+        lineNumber += 1
+        let resultsForFile = my.resultsByFile[fileName].map((searchResult, index) => {
+          lineNumber += 1
+          if (searchResult.seperator) {
+            return '  ..';
+          } else {
+            this.createDocumentLink(searchResult, lineNumber, searchQuery, uriString)
+            return `  ${searchResult.line}: ${searchResult.result}`
+          }
+        }).join('\n')
+        lineNumber += 1
+        return `
 ${fileName}:
 ${resultsForFile}`
-    })
-    let header = [`${resultsArray.length} search results found for "${searchQuery.query}"`]
-    let content = header.concat(lines)
-
-    return content.join('\n')
+      })
+      let header = [`${resultsArray.length} search results found for "${searchQuery.query}"`]
+      my.content += lines + "\n";//header.concat(lines) + "\n\n\n";
+  
+      // Fire event
+      my.onDidChangeEmitter.fire(uriString);
+    });
   }
 
   provideDocumentLinks(document) {
@@ -211,8 +238,4 @@ function parseSearchQuery(cmd:string) {
     path: searchPath,
     query: searchQuery
   };
-}
-
-function runCommandSync(query) {
-  return child_process.execSync(`${ripgrep.rgPath} --case-sensitive --line-number --column --hidden --context=2 -e "${query.query}" ${query.path}`, execOpts)
 }
