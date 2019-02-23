@@ -1,11 +1,10 @@
-const vscode = require('vscode')
+import * as vscode from 'vscode'
 const rootPath = vscode.workspace.rootPath
 
-module.exports = {
-  openFile: (params) => {
-    let filePath = `${rootPath}/${params.fileName}`
-    var document = vscode.workspace.openTextDocument(filePath)
-    vscode.window.showTextDocument(document, 1).then(() => {
+export function openFile(params) {
+  let filePath = `${rootPath}/${params.fileName}`
+  vscode.workspace.openTextDocument(filePath).then(doc => {
+    vscode.window.showTextDocument(doc, 1).then(() => {
       if (params.line) {
         let revealType = vscode.TextEditorRevealType.InCenter
         let editor = vscode.window.activeTextEditor
@@ -14,5 +13,5 @@ module.exports = {
         editor.revealRange(range, revealType)
       }
     })
-  }
+  })
 }

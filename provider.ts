@@ -1,10 +1,8 @@
-const vscode = require('vscode')
-const querystring = require('querystring')
-const rgPath = require('vscode-ripgrep').rgPath
-const path = require('path')
-const {
-  execSync
-} = require('child_process')
+import * as vscode from 'vscode'
+import * as querystring from 'querystring'
+import * as path from 'path'
+import * as ripgrep from 'vscode-ripgrep'
+import * as child_process from 'child_process'
 
 const rootPath = vscode.workspace.rootPath
 
@@ -13,13 +11,16 @@ const execOpts = {
   maxBuffer: 1024 * 1000
 }
 
-class SearchyProvider {
+export class SearchyProvider {
+  links:Array<Array<vscode.DocumentLink>>;
+  _subscriptions: vscode.Disposable;
+
   constructor() {
     this.links = []
     this._subscriptions = vscode.workspace.onDidCloseTextDocument(doc => {
       this.links[doc.uri.toString()] = []
-    })
-  }
+    });
+  };
 
   dispose() {
     this._subscriptions.dispose()
@@ -29,11 +30,11 @@ class SearchyProvider {
     return 'searchy'
   }
 
-  onDidChange() {}
+  onDidChange() { return null; }
 
   provideTextDocumentContent(uri) {
     let uriString = uri.toString()
-    this.links[uriString] = []
+    this.links[uriString] = [];
     const params = querystring.parse(uri.query)
     const cmd = params.cmd
 
@@ -160,8 +161,6 @@ ${resultsForFile}`
   }
 }
 
-module.exports = SearchyProvider
-
 function formatLine(splitLine) {
   return {
     file: splitLine[1],
@@ -188,11 +187,24 @@ function openLink(fileName, line) {
   return encodeURI('command:searchy.openFile?' + JSON.stringify(params))
 }
 
-function parseSearchQuery(cmd)
-{
+function parseSearchQuery(cmd:string) {
   let searchParts = cmd.match(/^([^:]+):\s?(.*)/);
-  let searchPath = searchParts[1];
-  let searchQuery = searchParts[2];
+  let searchPath = "";//searchParts[1];
+  let searchQuery = "";// = searchParts[2];
+
+  if(searchParts != null) {
+    searchPath = searchParts[0];
+    searchQuery = searchParts[1];
+  }
+  else {
+    searchQuery = cmd;
+  }
+
+  if(vscode.workspace.rootPath == null)
+  {
+    vscode.window.showInformationMessage("Open a folder");
+  }
+
   searchPath = path.join(vscode.workspace.rootPath, searchPath);
 
   return {
@@ -202,5 +214,5 @@ function parseSearchQuery(cmd)
 }
 
 function runCommandSync(query) {
-  return execSync(`${rgPath} --case-sensitive --line-number --column --hidden --context=2 -e "${query.query}" ${query.path}`, execOpts)
+  return child_process.execSync(`${ripgrep.rgPath} --case-sensitive --line-number --column --hidden --context=2 -e "${query.query}" ${query.path}`, execOpts)
 }
